@@ -149,7 +149,7 @@ mcp-registry list-tools [server_names...] [options]
 
 | Argument | Description |
 |----------|-------------|
-| `server_names` | (Optional) Names of specific servers to include |
+| `server_names` | (Optional) Names of specific servers to include (filters the registry) |
 
 **Options:**
 
@@ -259,7 +259,7 @@ mcp-registry serve [server_names...]
 
 | Argument | Description |
 |----------|-------------|
-| `server_names` | (Optional) Names of specific servers to include |
+| `server_names` | (Optional) Names of specific servers to include (filters the registry) |
 
 **Examples:**
 

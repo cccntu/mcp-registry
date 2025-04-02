@@ -110,6 +110,29 @@ class ServerRegistry:
             servers: Dictionary mapping server names to their configuration settings
         """
         self.registry = servers
+        
+    def filter_servers(self, server_names: list[str]) -> "ServerRegistry":
+        """
+        Create a new ServerRegistry containing only the specified servers.
+        
+        Args:
+            server_names: List of server names to include in the filtered registry
+            
+        Returns:
+            ServerRegistry: A new registry containing only the specified servers
+            
+        Raises:
+            ValueError: If any of the specified servers are not in the registry
+        """
+        missing = [name for name in server_names if name not in self.registry]
+        if missing:
+            raise ValueError(f"Servers not found: {', '.join(missing)}")
+            
+        filtered = {
+            name: settings for name, settings in self.registry.items()
+            if name in server_names
+        }
+        return ServerRegistry(filtered)
 
     @classmethod
     def from_dict(cls, config: dict) -> "ServerRegistry":
@@ -324,7 +347,20 @@ class MCPAggregator:
         aggregator = MCPAggregator(registry)
         result = await aggregator.call_tool("memory__get", {"key": "test"})
 
-        # Method 2: Persistent connections with context manager
+        # Method 2: Filtered registry - only include specific servers
+        filtered_registry = registry.filter_servers(["memory", "github"])
+        aggregator = MCPAggregator(filtered_registry)
+        result = await aggregator.call_tool("memory__get", {"key": "test"})
+
+        # Method 3: Filtered tools - only expose certain tools from servers
+        tool_filter = {
+            "memory": ["get", "set"],  # Only include get/set from memory
+            "github": ["list_repos", "create_issue"],  # Only specific github tools
+        }
+        aggregator = MCPAggregator(registry, tool_filter=tool_filter)
+        result = await aggregator.call_tool("memory__get", {"key": "test"})
+
+        # Method 4: Persistent connections with context manager
         async with MCPAggregator(registry) as aggregator:
             # All tool calls in this block will use persistent connections
             result1 = await aggregator.call_tool("memory__get", {"key": "test"})
@@ -333,25 +369,45 @@ class MCPAggregator:
     
     Attributes:
         registry: The ServerRegistry containing server configurations
-        server_names: List of server names to include in the aggregator
+        server_names: List of all server names in the registry (convenience reference)
+        tool_filter: Dictionary mapping server names to lists of tool names to include
         separator: Character(s) used to separate server name from tool name
         _namespaced_tool_map: Internal mapping of namespaced tool names to tool information
         _connection_manager: Connection manager for persistent connections (when used as context manager)
         _in_context_manager: Flag indicating if the aggregator is being used as a context manager
     """
-    def __init__(self, registry: ServerRegistry, server_names: list[str] | None = None, separator: str = "__"):
+    def __init__(
+        self, 
+        registry: ServerRegistry, 
+        tool_filter: dict[str, list[str] | None] | None = None,
+        separator: str = "__"
+    ):
         """
         Initialize the aggregator.
         
         Args:
             registry: ServerRegistry containing server configurations
-            server_names: Optional list of specific server names to include
-                         (defaults to all servers in the registry)
+            tool_filter: Optional dict mapping server names to lists of tool names to include.
+                        If a server is mapped to None, all tools from that server are included.
+                        If a server is not in the dict, all tools from that server are included.
             separator: Separator string between server name and tool name
                       (defaults to "__")
         """
         self.registry = registry
-        self.server_names = server_names or registry.list_servers()
+        self.server_names = registry.list_servers()
+        
+        # Validate and initialize tool_filter
+        if tool_filter is not None:
+            # Validate tool_filter contains only lists or None
+            for server, tools in tool_filter.items():
+                if tools is not None and not isinstance(tools, list):
+                    raise ValueError(
+                        f"Invalid tool_filter for server '{server}': "
+                        f"value must be a list or None, got {type(tools).__name__}"
+                    )
+            self.tool_filter = tool_filter
+        else:
+            self.tool_filter = {}
         self._namespaced_tool_map: dict[str, NamespacedTool] = {}
         self._connection_manager = None
         self._in_context_manager = False
@@ -414,7 +470,7 @@ class MCPAggregator:
         
         Args:
             specific_servers: Optional list of specific server names to load.
-                             If None, loads all servers in self.server_names.
+                             If None, loads all servers in the registry.
                              
         Returns:
             None
@@ -472,10 +528,29 @@ class MCPAggregator:
         # Load tools from all servers concurrently
         results = await gather(*(load_server_tools(name) for name in servers_to_load))
         
-        # Process and namespace the tools
+        # Helper function to check if a tool should be included based on the filter settings
+        def should_include_tool(server_name: str, tool_name: str) -> bool:
+            """Determine if a tool should be included based on the filter settings."""
+            # If server not in tool_filter, include all tools
+            if server_name not in self.tool_filter:
+                return True
+                
+            # If filter for server is None, include all tools
+            if self.tool_filter[server_name] is None:
+                return True
+                
+            # Only include tools in the specified list
+            return tool_name in self.tool_filter[server_name]
+            
+        # Process and namespace the tools with filtering
         for server_name, tools in results:
             for tool in tools:
                 original_name = tool.name
+                
+                # Skip this tool if it should be filtered out
+                if not should_include_tool(server_name, original_name):
+                    continue
+                
                 namespaced_name = f"{server_name}{self.separator}{original_name}"
                 # Create a copy of the tool with the namespaced name
                 namespaced_tool = tool.model_copy(update={"name": namespaced_name})
@@ -577,8 +652,8 @@ class MCPAggregator:
         # This is more efficient than loading all servers
         await self.load_servers(specific_servers=[actual_server])
 
-        if actual_server not in self.server_names:
-            err_msg = f"Server '{actual_server}' not found or not enabled"
+        if actual_server not in self.registry.list_servers():
+            err_msg = f"Server '{actual_server}' not found in registry"
             return CallToolResult(
                 isError=True,
                 message=err_msg,
@@ -593,6 +668,14 @@ class MCPAggregator:
                 content=[TextContent(type="text", text=message)],
             )
 
+        # Check if the tool exists in our namespaced_tool_map
+        namespaced_tool_name = f"{actual_server}{self.separator}{actual_tool}"
+        if namespaced_tool_name not in self._namespaced_tool_map:
+            if actual_server in self.tool_filter and self.tool_filter[actual_server] is not None:
+                # The tool might be filtered out
+                if actual_tool not in self.tool_filter[actual_server]:
+                    return error_result(f"Tool '{actual_tool}' not found or filtered out from server '{actual_server}'")
+        
         # Process the result from either connection type
         def process_result(result) -> CallToolResult:
             # If the call returns an error result, propagate it.
@@ -663,15 +746,18 @@ class MCPAggregator:
             return error_result(err_msg)
 
 
-async def run_registry_server(registry: ServerRegistry, server_names: list[str] | None = None):
+async def run_registry_server(registry: ServerRegistry):
     """
     Create and run an MCP compound server that aggregates tools from the registry.
+    
+    Args:
+        registry: Registry containing only the servers that should be exposed
     """
     # Create server
     server = Server("MCP Registry Server")
 
-    # Create aggregator
-    aggregator = MCPAggregator(registry, server_names)
+    # Create aggregator using the filtered registry
+    aggregator = MCPAggregator(registry)
 
     # List available tools
     try:

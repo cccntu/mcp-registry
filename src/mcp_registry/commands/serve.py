@@ -57,19 +57,19 @@ def serve(servers, project):
     # Determine which servers to use
     server_names = list(servers) if servers else None
 
-    # Check if all specified servers exist
+    # Filter the registry if specific servers are requested
     if server_names:
-        missing_servers = [s for s in server_names if s not in available_servers]
-        if missing_servers:
-            click.echo(f"Error: Servers not found: {', '.join(missing_servers)}", err=True)
+        try:
+            registry = registry.filter_servers(server_names)
+            click.echo(f"Serving {len(registry.registry)} servers: {', '.join(registry.registry.keys())}", err=True)
+        except ValueError as e:
+            click.echo(f"Error: {str(e)}", err=True)
             return
-
-        click.echo(f"Serving {len(server_names)} servers: {', '.join(server_names)}", err=True)
     else:
-        click.echo(f"Serving all {len(available_servers)} available servers", err=True)
+        click.echo(f"Serving all {len(registry.registry)} available servers", err=True)
 
-    # Run the compound server
-    asyncio.run(run_registry_server(registry, server_names))
+    # Run the compound server with pre-filtered registry
+    asyncio.run(run_registry_server(registry))
 
 
 def register_commands(cli_group):

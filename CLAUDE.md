@@ -11,6 +11,7 @@
    - Loads/saves server configurations from JSON
    - Maps server names to `MCPServerSettings` objects
    - Creates client sessions for connecting to servers
+   - Supports filtering to create subsets with `filter_servers()`
 
 2. **MCPAggregator** (`compound.py`)
    - Namespaces tools as `server_name__tool_name`
@@ -18,6 +19,7 @@
    - Handles tool listing and calling across servers
    - Implements the `list_tools()` and `call_tool()` methods
    - Key entrypoint for programmatic tool calls
+   - Supports tool-level filtering with `tool_filter` parameter
 
 3. **MCPConnectionManager** (`connection.py`)
    - Handles concurrent persistent connections
@@ -55,8 +57,20 @@
 
 2. **Creating an Aggregator**
    ```python
+   # Basic usage
    registry = ServerRegistry({"server_name": server_settings})
    aggregator = MCPAggregator(registry)
+   
+   # With server filtering
+   filtered_registry = full_registry.filter_servers(["memory", "github"])
+   aggregator = MCPAggregator(filtered_registry)
+   
+   # With tool filtering
+   tool_filter = {
+       "memory": ["get", "set"],  # Only include specific tools
+       "github": None,  # Include all tools from this server
+   }
+   aggregator = MCPAggregator(registry, tool_filter=tool_filter)
    ```
 
 3. **Listing Tools**

@@ -8,9 +8,9 @@ A tool that solves key challenges when working with multiple [Model Context Prot
 **Problem**: Managing MCP server configurations typically requires manual JSON editing, which is error-prone and tedious.  
 **Solution**: MCP Registry provides an intuitive CLI interface to add, remove, and edit server configurations without directly editing JSON files.
 
-### 2. Selective Server Exposure
-**Problem**: When you have a large configuration with many MCP servers, there's no easy way to expose only a subset without creating and maintaining multiple configuration files.  
-**Solution**: MCP Registry lets you run a compound server that includes only specific servers from your main configuration, without creating separate config files.
+### 2. Selective Server and Tool Exposure
+**Problem**: When you have a large configuration with many MCP servers and tools, there's no easy way to expose only a subset without creating and maintaining multiple configuration files.  
+**Solution**: MCP Registry lets you run a compound server that includes only specific servers and tools from your main configuration, without creating separate config files.
 
 ### 3. Synchronized Settings Across Tools
 **Problem**: Different MCP clients (Claude Desktop, Cursor, Claude Code) each maintain their own configurations, requiring duplicate setup.  
@@ -210,7 +210,21 @@ async def main():
         arguments={"a": 5, "b": 3}
     )
     
-    # Method 2: Persistent connections using context manager
+    # Method 2: With server and tool filtering
+    # Filter servers - only connect to specific servers
+    filtered_registry = registry.filter_servers(["memory", "everything"])
+    
+    # Filter tools - only expose specific tools from each server
+    tool_filter = {
+        "memory": ["get", "set"],  # Only include get/set from memory
+        "everything": None,  # Include all tools from everything server
+    }
+    
+    # Create aggregator with both filtering levels
+    filtered_aggregator = MCPAggregator(filtered_registry, tool_filter=tool_filter)
+    filtered_tools = await filtered_aggregator.list_tools()  # Only shows filtered tools
+    
+    # Method 3: Persistent connections using context manager
     # Maintains connections for the duration of the context
     async with MCPAggregator(registry) as persistent_aggregator:
         # Connections established when entering context
@@ -328,6 +342,7 @@ Comprehensive documentation is available in the `docs/` directory:
 - [Getting Started Guide](docs/getting_started.md) - A step-by-step introduction to MCP Registry
 - [API Reference](docs/api_reference.md) - Detailed reference for the MCP Registry API
 - [Async Connection Management](docs/async-connection-management.md) - Explanation of connection patterns
+- [Selective Loading](docs/selective_loading.md) - Examples and best practices for server and tool filtering
 - [Integration Tutorial](docs/tutorial_integrating_servers.md) - Tutorial on integrating MCP servers with AI tools
 
 For practical examples, see the [examples](examples/) directory.

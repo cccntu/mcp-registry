@@ -199,13 +199,15 @@ class MCPAggregator:
             result2 = await aggregator.call_tool("memory__set", {"key": "test", "value": "hello"})
     """
     
-    def __init__(self, registry: ServerRegistry, server_names: list[str] | None = None, separator: str = "__"):
+    def __init__(self, registry: ServerRegistry, tool_filter: dict[str, list[str] | None] | None = None, separator: str = "__"):
         """
         Initialize the aggregator.
         
         Args:
             registry: ServerRegistry containing server configurations
-            server_names: Optional list of specific server names to include (defaults to all servers)
+            tool_filter: Optional dict mapping server names to lists of tool names to include.
+                       If a server is mapped to None, all tools from that server are included.
+                       If a server is not in the dict, all tools from that server are included.
             separator: Separator character between server name and tool name
         """
         
@@ -283,13 +285,12 @@ class MCPConnectionManager:
     for more advanced connection management scenarios.
     """
     
-    def __init__(self, registry: ServerRegistry, server_names: list[str] | None = None):
+    def __init__(self, registry: ServerRegistry):
         """
         Initialize the connection manager.
         
         Args:
-            registry: ServerRegistry containing server configurations
-            server_names: Optional list of specific server names to include (defaults to all)
+            registry: ServerRegistry containing server configurations (can be filtered with registry.filter_servers())
         """
         
     async def __aenter__(self):
@@ -440,13 +441,13 @@ def get_config_path() -> Path:
 ### Server Running
 
 ```python
-async def run_registry_server(registry: ServerRegistry, server_names: list[str] | None = None):
+async def run_registry_server(registry: ServerRegistry):
     """
     Create and run an MCP compound server that aggregates tools from the registry.
     
     Args:
         registry: ServerRegistry containing server configurations
-        server_names: Optional list of specific server names to include (defaults to all)
+               (can be filtered using registry.filter_servers() before passing)
     """
 ```
 
@@ -593,11 +594,14 @@ import asyncio
 
 async def main():
     # Load all servers from config
-    registry = ServerRegistry.from_config(get_config_path())
+    full_registry = ServerRegistry.from_config(get_config_path())
     
-    # Only use specific servers from the registry
+    # Create a filtered registry with only specified servers
     specific_servers = ["memory", "filesystem"]
-    aggregator = MCPAggregator(registry, server_names=specific_servers)
+    filtered_registry = full_registry.filter_servers(specific_servers)
+    
+    # Create an aggregator with the filtered registry
+    aggregator = MCPAggregator(filtered_registry)
     
     # Only tools from the specified servers will be available
     tools_result = await aggregator.list_tools()
