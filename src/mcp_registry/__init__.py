@@ -15,7 +15,7 @@ from .connection import (
     ConnectionState,
 )
 
-from .cli import (
+from .utils.config import (
     get_config_path,
     get_default_config_path,
 )

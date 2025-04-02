@@ -92,6 +92,33 @@ def test_server_registry_from_config_missing_servers(tmp_path):
         ServerRegistry.from_config(config_path)
 
 
+def test_server_registry_from_config_missing_type(tmp_path):
+    """Test loading a config file with servers that don't specify type."""
+    config_path = tmp_path / "config.json"
+    
+    # Create a config with servers missing type field
+    config = {
+        "mcpServers": {
+            "no_type_server": {
+                "command": "test",
+                "args": ["arg1", "arg2"]
+            }
+        }
+    }
+    
+    with open(config_path, "w") as f:
+        json.dump(config, f)
+    
+    # Load the config and verify type defaults to stdio
+    registry = ServerRegistry.from_config(config_path)
+    
+    assert "no_type_server" in registry.registry
+    server_settings = registry.registry["no_type_server"]
+    assert server_settings.type == "stdio"
+    assert server_settings.command == "test"
+    assert server_settings.args == ["arg1", "arg2"]
+
+
 def test_server_registry_save_config(tmp_path, test_servers):
     """Test saving ServerRegistry configuration to a file."""
     # Create a registry
@@ -156,6 +183,31 @@ def test_server_registry_save_config_excludes_none(tmp_path):
     assert "description" not in server_config
     assert "url" not in server_config
     assert "env" not in server_config
+
+
+def test_mcp_server_settings_default_type():
+    """Test that MCPServerSettings defaults to stdio type when not specified."""
+    # Create a settings object without specifying type
+    settings = MCPServerSettings(
+        command="test",
+        args=["arg"],
+    )
+    
+    # Verify the type defaulted to stdio
+    assert settings.type == "stdio"
+    
+    # Verify the transport property reflects the type
+    assert settings.transport == "stdio"
+    
+    # Create a settings object explicitly specifying type
+    settings_sse = MCPServerSettings(
+        type="sse",
+        url="http://localhost:8000",
+    )
+    
+    # Verify the explicit type was used
+    assert settings_sse.type == "sse"
+    assert settings_sse.transport == "sse"
 
 
 @pytest.fixture

@@ -1,137 +1,136 @@
-# Claude Knowledge for MCP Registry
+# Claude's Reference Guide for MCP Registry
 
-This document contains useful information for Claude when working with the MCP Registry codebase.
+## Core Architecture
 
-## Project Overview
-
-MCP Registry is a tool for managing and interacting with multiple [Model Context Protocol (MCP)](https://modelcontextprotocol.io) servers. It solves three key problems:
-
-1. **Simplified MCP Server Configuration Management**: Replaces manual JSON editing with an intuitive CLI
-2. **Selective Server Exposure**: Run only specific servers from your configuration without multiple files
-3. **Synchronized Settings**: Configure servers once and access from multiple clients
-
-## Repository Structure
-
-- `src/mcp_registry/`: Core code
-  - `compound.py`: Server registry, settings, and aggregator
-  - `connection.py`: Connection management for persistent connections
-  - `cli.py`: Command-line interface
-- `docs/`: Documentation
-  - `api_reference.md`: Detailed API documentation
-  - `getting_started.md`: Introduction guide
-  - `cli_reference.md`: CLI command reference
-  - `async-connection-management.md`: Async patterns explanation
-  - `tutorial_integrating_servers.md`: Integration tutorial
-- `examples/`: Example scripts
-- `tests/`: Test files
+- **MCP Registry**: Manages MCP servers, provides CLI tools, and aggregates server tools
+- **Server configuration**: Stored in `~/.config/mcp_registry/mcp_registry_config.json` (configurable via `MCP_REGISTRY_CONFIG`)
 
 ## Key Components
 
-1. **ServerRegistry**: Manages server configurations
-   - Loads/saves config files
-   - Provides client sessions for servers
+1. **ServerRegistry** (`compound.py`)
+   - Loads/saves server configurations from JSON
+   - Maps server names to `MCPServerSettings` objects
+   - Creates client sessions for connecting to servers
 
-2. **MCPAggregator**: Aggregates multiple servers
-   - Namespaces tools with server names (e.g., "server_name__tool_name")
-   - Supports both temporary and persistent connections
+2. **MCPAggregator** (`compound.py`)
+   - Namespaces tools as `server_name__tool_name`
+   - Supports temporary and persistent connections
+   - Handles tool listing and calling across servers
+   - Implements the `list_tools()` and `call_tool()` methods
+   - Key entrypoint for programmatic tool calls
 
-3. **MCPConnectionManager**: Manages persistent connections
-   - Uses async context managers for proper resource lifecycle
-   - Implements concurrent connection management
+3. **MCPConnectionManager** (`connection.py`)
+   - Handles concurrent persistent connections
+   - Uses async context managers for proper lifecycle
+   - More efficient for multiple tool calls
 
-4. **CLI**: Command-line interface for managing servers
-   - Add/remove servers
-   - Run compound servers with selected servers
+4. **CLI Commands** (`cli.py`, `commands/*.py`)
+   - **init**: Create config file and import Claude Desktop settings
+   - **add/remove/list**: Manage server configurations 
+   - **serve**: Run compound server with all/selected servers
+   - **list-tools**: Display tools from servers with 3 verbosity levels
+   - **test-tool**: Test tools interactively or programmatically
 
-## Connection Patterns
+## Core Files
 
-MCP Registry supports two connection modes:
+- `src/mcp_registry/compound.py`: Server registry, settings, and aggregator
+- `src/mcp_registry/connection.py`: Persistent connection management
+- `src/mcp_registry/cli.py`: Main CLI entrypoint
+- `src/mcp_registry/commands/tools.py`: Tool-related commands (list-tools, test-tool)
+- `src/mcp_registry/commands/serve.py`: Server command
+- `src/mcp_registry/utils/config.py`: Configuration utilities
+- `src/mcp_registry/utils/cli.py`: CLI decorators and helpers
 
-1. **Temporary Connections (default)**
-   - Creates a new connection for each tool call
-   - Simpler but less efficient for multiple calls
+## Important Code Patterns
 
-2. **Persistent Connections**
-   - Uses async context manager pattern
-   - Maintains connections across multiple tool calls
-   - Better performance for repeated calls
+1. **Server Settings**
+   ```python
+   settings = MCPServerSettings(
+       type="stdio",                  # or "sse"
+       command="/bin/zsh",            # for stdio
+       args=["-c", "npm run server"], # for stdio
+       url="http://localhost:3000",   # for sse
+   )
+   ```
 
-## Common Tasks
+2. **Creating an Aggregator**
+   ```python
+   registry = ServerRegistry({"server_name": server_settings})
+   aggregator = MCPAggregator(registry)
+   ```
 
-### Adding Docstrings
+3. **Listing Tools**
+   ```python
+   # Get all tools from all servers
+   tools_result = await aggregator.list_tools()
+   
+   # Get tools grouped by server
+   server_tools = await aggregator.list_tools(return_server_mapping=True)
+   ```
 
-When adding docstrings, follow this format:
-```python
-def function_name(param1, param2):
-    """
-    Brief description of function purpose.
-    
-    More detailed explanation if needed.
-    
-    Args:
-        param1: Description of parameter
-        param2: Description of parameter
-    
-    Returns:
-        Description of return value
-        
-    Raises:
-        ExceptionType: Description of when this exception is raised
-    
-    Example:
-        ```python
-        result = function_name("foo", 42)
-        ```
-    """
-```
+4. **Calling Tools**
+   ```python
+   # Using namespaced format
+   result = await aggregator.call_tool("server_name__tool_name", {"param": "value"})
+   
+   # Alternative format
+   result = await aggregator.call_tool(tool_name="tool_name", 
+                                       arguments={"param": "value"}, 
+                                       server_name="server_name")
+   ```
 
-### Testing
+5. **Persistent Connections**
+   ```python
+   async with MCPAggregator(registry) as aggregator:
+       result1 = await aggregator.call_tool("memory__get", {"key": "test"})
+       result2 = await aggregator.call_tool("memory__set", {"key": "test", "value": "hello"})
+   ```
 
-Use pytest for testing:
+## CLI Command Examples
+
 ```bash
-# Run all tests
-pytest
+# Initialize config
+mcp-registry init
 
-# Run a specific test file
-pytest tests/test_specific.py
+# Add servers
+mcp-registry add memory npx -y @modelcontextprotocol/server-memory
+mcp-registry add filesystem npx -y @modelcontextprotocol/server-filesystem
 
-# Run with verbose output
-pytest -v
+# List configured servers
+mcp-registry list
+
+# List available tools
+mcp-registry list-tools  # all servers
+mcp-registry list-tools memory  # specific server
+mcp-registry list-tools -v  # with parameter info
+
+# Test a tool interactively
+mcp-registry test-tool memory__get  # interactive mode
+mcp-registry test-tool memory__set --input '{"key": "foo", "value": "bar"}'  # with JSON
+echo '{"key": "foo"}' | mcp-registry test-tool memory__get  # piped input
+
+# Run a compound server
+mcp-registry serve  # all servers
+mcp-registry serve memory filesystem  # specific servers
 ```
 
-### Documentation Best Practices
+## Testing Conventions
 
-- Keep examples in all docstrings
-- Include parameter and return type information
-- Document exceptions and error conditions
-- Use markdown formatting for documentation files
+- **Unit tests**: Focus on isolated component functionality (files in `/tests`)
+- **Mock server connections** for tests to avoid external dependencies
+- Mocking click commands requires careful handling of Context objects
+- Use `click.testing.CliRunner` to test CLI functions
 
-## Development Guidelines
+## Documentation Guidelines
 
-1. **Error Handling**:
-   - Use appropriate error types for different failure modes
-   - Include context information in error messages
+- Keep examples in docstrings, including parameter types
+- Use type annotations throughout the codebase
+- Document CLI commands in `docs/cli_reference.md`
+- Use `docs/cli_test_tool.md` for test-tool documentation
 
-2. **Async Patterns**:
-   - Use async context managers for resource lifecycle management
-   - Ensure proper cleanup in `__aexit__` methods
-   - Use concurrent execution with `gather()` where appropriate
+## Error Handling Standards
 
-3. **Configuration**:
-   - Use standard file locations adhering to platform conventions
-   - Support environment variables for configuration overrides
-   - Validate configuration for better error messages
-
-4. **Testing**:
-   - Unit test individual components in isolation
-   - Include integration tests for real-world use cases
-   - Use mocks for testing server connections
-
-## Future Improvements
-
-Potential enhancements to consider:
-- Standardizing error handling patterns
-- Adding automatic retries for transient errors
-- Implementing connection pooling
-- Adding health checks and monitoring
-- Supporting server profiles for different environments
+- Use correct exit codes (1 for errors, 0 for success)
+- Provide detailed, but concise error messages
+- Use `err=True` with `click.echo()` for error messages
+- Handle both expected exceptions and fallbacks

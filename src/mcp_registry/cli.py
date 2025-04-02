@@ -1,5 +1,4 @@
 # src/mcp_registry/cli.py
-import asyncio
 import json
 import os
 import shutil
@@ -9,99 +8,15 @@ from pathlib import Path
 
 import click
 
-from mcp_registry.compound import MCPServerSettings, ServerRegistry, run_registry_server
-
-# Default config location with override via environment variable
-def get_default_config_path():
-    """Get the default config path respecting XDG_CONFIG_HOME."""
-    xdg_config_home = os.getenv("XDG_CONFIG_HOME", str(Path.home() / ".config"))
-    return Path(xdg_config_home) / "mcp_registry" / "mcp_registry_config.json"
-
-CONFIG_FILE = Path(os.getenv("MCP_REGISTRY_CONFIG", str(get_default_config_path())))
-
-def get_config_path():
-    """Get the current config path."""
-    return CONFIG_FILE
-
-def set_config_path(path):
-    """Set the config path globally."""
-    global CONFIG_FILE
-    CONFIG_FILE = Path(path).resolve()
-    return CONFIG_FILE
-
-
-def load_config():
-    """Load the configuration file or return an empty config if it doesn't exist."""
-    if CONFIG_FILE.exists():
-        with open(CONFIG_FILE) as f:
-            return json.load(f)
-    return {"mcpServers": {}}
-
-
-def save_config(config):
-    """Save the configuration to the file, creating the directory if needed."""
-    CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(CONFIG_FILE, "w") as f:
-        json.dump(config, f, indent=2)
-
-
-def find_claude_desktop_config():
-    """Find the Claude Desktop config file path if it exists."""
-    claude_config_path = None
-    if os.name == "posix":  # Mac or Linux
-        claude_config_path = Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
-    elif os.name == "nt":  # Windows
-        appdata = os.getenv("APPDATA")
-        if appdata:
-            claude_config_path = Path(appdata) / "Claude" / "claude_desktop_config.json"
-
-    if claude_config_path and claude_config_path.exists():
-        return claude_config_path
-    return None
-
-
-def get_project_mappings_path():
-    """Get the path to the project mappings file."""
-    xdg_config_home = os.getenv("XDG_CONFIG_HOME", str(Path.home() / ".config"))
-    return Path(xdg_config_home) / "mcp_registry" / "project_mappings.json"
-
-def load_project_mappings():
-    """Load project-to-server mappings."""
-    path = get_project_mappings_path()
-    if path.exists():
-        with open(path) as f:
-            return json.load(f)
-    return {"projects": {}}  # Map of project names to list of server names
-
-def save_project_mappings(mappings):
-    """Save project-to-server mappings."""
-    path = get_project_mappings_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w") as f:
-        json.dump(mappings, f, indent=2)
-
-def get_project_servers(project: str):
-    """Get list of servers enabled for a project."""
-    mappings = load_project_mappings()
-    return mappings["projects"].get(project, [])
-
-def add_server_to_project(server_name: str, project: str):
-    """Add a server to a project's enabled servers."""
-    mappings = load_project_mappings()
-    if "projects" not in mappings:
-        mappings["projects"] = {}
-    if project not in mappings["projects"]:
-        mappings["projects"][project] = []
-    if server_name not in mappings["projects"][project]:
-        mappings["projects"][project].append(server_name)
-        save_project_mappings(mappings)
-
-def remove_server_from_project(server_name: str, project: str):
-    """Remove a server from a project's enabled servers."""
-    mappings = load_project_mappings()
-    if project in mappings.get("projects", {}) and server_name in mappings["projects"][project]:
-        mappings["projects"][project].remove(server_name)
-        save_project_mappings(mappings)
+from mcp_registry.compound import MCPServerSettings, ServerRegistry
+from mcp_registry.utils.config import (
+    CONFIG_FILE, get_config_path, set_config_path, 
+    load_config, save_config, find_claude_desktop_config,
+    get_project_mappings_path, load_project_mappings, save_project_mappings,
+    get_project_servers, add_server_to_project, remove_server_from_project
+)
+from mcp_registry.commands.tools import register_commands as register_tools_commands
+from mcp_registry.commands.serve import register_commands as register_serve_commands
 
 
 @click.group()
@@ -112,6 +27,10 @@ def cli():
     Use 'show-config-path' command to see current location.
     """
     pass
+
+# Register commands from modules
+register_tools_commands(cli)
+register_serve_commands(cli)
 
 
 @cli.command()
@@ -332,72 +251,6 @@ def list_servers(project):
             click.echo(f"  {name}: unknown type {settings['type']}{desc}{project_tag}", err=True)
 
 
-@cli.command()
-@click.argument("servers", nargs=-1)
-@click.option("--project", "-p", help="Project name to serve servers for")
-def serve(servers, project):
-    """Start the MCP Registry compound server.
-
-    If no servers are specified, all registered servers will be served.
-    Use --project to only serve servers enabled for a specific project.
-
-    Examples:
-        mcp-registry serve  # serves all servers
-        mcp-registry serve memory github  # serves specific servers
-        mcp-registry serve --project myproject  # serves project-enabled servers
-    """
-    if not CONFIG_FILE.exists():
-        click.echo("Global configuration file not found. Run 'mcp-registry init' first.", err=True)
-        return
-
-    config = load_config()
-    if not config["mcpServers"]:
-        click.echo("No servers registered.", err=True)
-        return
-
-    # Filter servers based on project
-    available_servers = {}
-    if project:
-        project_servers = set(get_project_servers(project))
-        available_servers = {
-            name: MCPServerSettings(**settings)
-            for name, settings in config["mcpServers"].items()
-            if name in project_servers
-        }
-    else:
-        available_servers = {
-            name: MCPServerSettings(**settings)
-            for name, settings in config["mcpServers"].items()
-        }
-
-    if not available_servers:
-        if project:
-            click.echo(f"No servers enabled for project '{project}'", err=True)
-        else:
-            click.echo("No servers available", err=True)
-        return
-
-    # Create registry from available servers
-    registry = ServerRegistry(available_servers)
-
-    # Determine which servers to use
-    server_names = list(servers) if servers else None
-
-    # Check if all specified servers exist
-    if server_names:
-        missing_servers = [s for s in server_names if s not in available_servers]
-        if missing_servers:
-            click.echo(f"Error: Servers not found: {', '.join(missing_servers)}", err=True)
-            return
-
-        click.echo(f"Serving {len(server_names)} servers: {', '.join(server_names)}", err=True)
-    else:
-        click.echo(f"Serving all {len(available_servers)} available servers", err=True)
-
-    # Run the compound server
-    asyncio.run(run_registry_server(registry, server_names))
-
-
 @cli.command(name="show-config-path")
 def show_config_path():
     """Show the current config file path."""
@@ -406,6 +259,26 @@ def show_config_path():
         click.echo("(Set via MCP_REGISTRY_CONFIG environment variable)", err=True)
     else:
         click.echo("(Using default config location)", err=True)
+
+
+@cli.command(name="show")
+def show_config():
+    """Show the current configuration file content.
+    
+    This command outputs the raw content of the configuration file to stdout,
+    making it easy to view, pipe, or redirect to other tools.
+    """
+    if not CONFIG_FILE.exists():
+        click.echo("Configuration file not found. Run 'mcp-registry init' first.", err=True)
+        return
+        
+    try:
+        with open(CONFIG_FILE) as f:
+            # Just dump the raw file contents without processing
+            click.echo(f.read())
+    except Exception as e:
+        click.echo(f"Error reading configuration: {e}", err=True)
+        return
 
 
 @cli.command()

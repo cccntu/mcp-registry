@@ -132,3 +132,223 @@ def test_list_empty(runner, temp_config_path):
 
     assert result.exit_code == 0
     assert "No servers registered" in result.output
+
+
+def test_list_tools_no_config(runner, temp_config_path):
+    """Test list-tools when no config exists."""
+    # Don't initialize the config
+    result = runner.invoke(cli, ["list-tools"])
+    
+    assert result.exit_code == 0
+    assert "Global configuration file not found" in result.output
+
+
+def test_list_tools_no_servers(runner, temp_config_path):
+    """Test list-tools when no servers are registered."""
+    # First initialize the config
+    runner.invoke(cli, ["init"])
+    
+    # List tools
+    result = runner.invoke(cli, ["list-tools"])
+    
+    assert result.exit_code == 0
+    assert "No servers registered" in result.output
+
+
+@pytest.mark.asyncio
+async def test_list_tools_with_mock_server(runner, temp_config_path, monkeypatch):
+    """Test list-tools with a mocked server returning tools."""
+    from unittest.mock import AsyncMock, MagicMock
+    
+    # First initialize the config
+    runner.invoke(cli, ["init"])
+    
+    # Add a mock server
+    runner.invoke(cli, ["add", "mock-server", "echo", "dummy"])
+    
+    # Create mock tool data
+    mock_tool1 = MagicMock()
+    mock_tool1.name = "tool1"
+    mock_tool1.description = "Tool 1 description that is long enough to be truncated in the default output mode"
+    mock_tool1.inputSchema = {
+        "properties": {
+            "param1": {"type": "string", "description": "Parameter 1 description"},
+            "param2": {"type": "number", "description": "Parameter 2 description"}
+        },
+        "required": ["param1"]
+    }
+    
+    mock_tool2 = MagicMock()
+    mock_tool2.name = "tool2"
+    mock_tool2.description = "Tool 2 description"
+    mock_tool2.inputSchema = {
+        "properties": {
+            "option": {"type": "boolean", "description": "Option description"}
+        },
+        "required": []
+    }
+    
+    # Create mock for aggregator.list_tools
+    mock_list_tools = AsyncMock()
+    mock_list_tools.return_value = {"mock-server": [mock_tool1, mock_tool2]}
+    
+    # Mock the MCPAggregator class
+    mock_aggregator = MagicMock()
+    mock_aggregator.return_value.list_tools = mock_list_tools
+    monkeypatch.setattr("mcp_registry.compound.MCPAggregator", mock_aggregator)
+    
+    # Test default output (standard verbosity)
+    result = runner.invoke(cli, ["list-tools"])
+    assert result.exit_code == 0
+    assert "Server: mock-server" in result.output
+    assert "tool1: Tool 1 description" in result.output
+    assert "tool2: Tool 2 description" in result.output
+    assert "Parameter 1 description" not in result.output  # Parameters not shown in default mode
+    
+    # Test -v output (medium verbosity)
+    result = runner.invoke(cli, ["list-tools", "-v"])
+    assert result.exit_code == 0
+    assert "Server: mock-server" in result.output
+    assert "Tool: tool1" in result.output
+    assert "Description: Tool 1 description" in result.output
+    assert "Parameters:" in result.output
+    assert "param1 (string, required)" in result.output
+    assert "param2 (number, optional)" in result.output
+    
+    # Test -vv output (high verbosity)
+    result = runner.invoke(cli, ["list-tools", "-vv"])
+    assert result.exit_code == 0
+    assert "Server: mock-server" in result.output
+    assert "Tool: tool1" in result.output
+    assert "Description: Tool 1 description that is long enough to be truncated" in result.output
+    assert "Parameters:" in result.output
+    assert "param1 (string, required): Parameter 1 description" in result.output
+    
+    # Test filtering by server name
+    result = runner.invoke(cli, ["list-tools", "mock-server"])
+    assert result.exit_code == 0
+    assert "Server: mock-server" in result.output
+    
+    # Test filtering by non-existent server
+    result = runner.invoke(cli, ["list-tools", "non-existent-server"])
+    assert result.exit_code == 0
+    assert "No matching servers found" in result.output
+
+
+@pytest.mark.asyncio
+async def test_test_tool_command(runner, temp_config_path, monkeypatch):
+    """Test test-tool command with a mocked server."""
+    from unittest.mock import AsyncMock, MagicMock
+    from dataclasses import dataclass
+    
+    # First initialize the config
+    runner.invoke(cli, ["init"])
+    
+    # Add a mock server
+    runner.invoke(cli, ["add", "mock-server", "echo", "dummy"])
+    
+    # Create mock tool result
+    @dataclass
+    class MockContent:
+        type: str = "text"
+        text: str = "Test result content"
+    
+    @dataclass
+    class MockResult:
+        isError: bool = False
+        message: str = ""
+        content: list = None
+        
+        def __post_init__(self):
+            if self.content is None:
+                self.content = [MockContent()]
+    
+    # Create mock for aggregator.call_tool
+    mock_call_tool = AsyncMock()
+    mock_call_tool.return_value = MockResult()
+    
+    # Create mock for tool schema
+    @dataclass
+    class MockTool:
+        name: str = "tool1"
+        description: str = "Test tool"
+        inputSchema: dict = None
+        
+        def __post_init__(self):
+            if self.inputSchema is None:
+                self.inputSchema = {
+                    "properties": {
+                        "param1": {"type": "string", "description": "Test parameter"},
+                        "param2": {"type": "number", "description": "Another parameter"}
+                    },
+                    "required": ["param1"]
+                }
+    
+    # Mock the MCPAggregator class
+    mock_aggregator = MagicMock()
+    mock_aggregator.return_value.call_tool = mock_call_tool
+    mock_aggregator.return_value.list_tools = AsyncMock(return_value={"mock-server": [MockTool()]})
+    monkeypatch.setattr("mcp_registry.compound.MCPAggregator", mock_aggregator)
+    
+    # Test basic tool call
+    result = runner.invoke(cli, ["test-tool", "mock-server__tool1", "--input", '{"param1": "test"}'])
+    assert result.exit_code == 0
+    assert "Test result content" in result.output
+    
+    # Test call with input file
+    with open(temp_config_path.parent / "input.json", "w") as f:
+        f.write('{"param1": "test", "param2": 123}')
+    
+    result = runner.invoke(cli, ["test-tool", "mock-server__tool1", "--input-file", 
+                                str(temp_config_path.parent / "input.json")])
+    assert result.exit_code == 0
+    assert "Test result content" in result.output
+    
+    # Test raw output
+    result = runner.invoke(cli, ["test-tool", "mock-server__tool1", "--input", '{"param1": "test"}', "--raw"])
+    assert result.exit_code == 0
+    assert "isError" in result.output
+    assert "content" in result.output
+    
+    # Test error result
+    mock_call_tool.return_value = MockResult(isError=True, message="Test error message")
+    result = runner.invoke(cli, ["test-tool", "mock-server__tool1", "--input", '{"param1": "test"}'])
+    assert result.exit_code == 1
+    assert "Error" in result.output
+    assert "Test error message" in result.output
+    
+    # Test invalid server format
+    result = runner.invoke(cli, ["test-tool", "invalid-format", "--input", '{"param1": "test"}'])
+    assert result.exit_code == 0
+    assert "Error: Tool path must be in format" in result.output
+    
+    # Test non-existent server
+    result = runner.invoke(cli, ["test-tool", "nonexistent__tool", "--input", '{"param1": "test"}'])
+    assert result.exit_code == 0
+    assert "Error: Server 'nonexistent' not found" in result.output
+    
+    # Test interactive mode (mocked)
+    # Note: We're using non-interactive with stdin to avoid actual prompts in tests
+    # In a real interactive session, the user would be prompted for input
+    mock_call_tool.return_value = MockResult()
+    result = runner.invoke(cli, ["test-tool", "mock-server__tool1", "--non-interactive"], 
+                           input='{"param1": "interactive test"}')
+    assert result.exit_code == 0  # Should still work with --non-interactive
+    
+    # For full interactive testing we would need to mock click.prompt,
+    # which is more complex in a test environment
+
+
+def test_show_config(runner, temp_config_path):
+    """Test show command."""
+    # First initialize the config
+    runner.invoke(cli, ["init"])
+    
+    # Add a server to have something in the config
+    runner.invoke(cli, ["add", "test-server", "python", "-m", "test"])
+    
+    # Show config
+    result = runner.invoke(cli, ["show"])
+    assert result.exit_code == 0
+    assert "mcpServers" in result.output
+    assert "test-server" in result.output

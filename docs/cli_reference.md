@@ -12,6 +12,8 @@ MCP Registry provides the following commands:
 | `add` | Add a new server to the configuration |
 | `remove` | Remove a server from the configuration |
 | `list` | List all configured servers |
+| `list-tools` | List all tools provided by MCP servers |
+| `test-tool` | Test an MCP tool with provided input |
 | `edit` | Edit the configuration file with your default editor |
 | `serve` | Run a compound server with all or selected servers |
 | `show-config-path` | Show the current configuration file path |
@@ -135,6 +137,116 @@ This command:
 2. Validates the JSON when you save
 3. Creates a backup of the previous version before saving
 
+### `list-tools`
+
+List all tools provided by MCP servers.
+
+```bash
+mcp-registry list-tools [server_names...] [options]
+```
+
+**Arguments:**
+
+| Argument | Description |
+|----------|-------------|
+| `server_names` | (Optional) Names of specific servers to include |
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--verbose`, `-v` | Increase verbosity level (can be used multiple times) |
+
+**Verbosity Levels:**
+
+- Default: Tool names with truncated descriptions
+- `-v`: Also shows parameter information with truncated descriptions
+- `-vv`: Shows full details with complete descriptions
+
+**Examples:**
+
+```bash
+# List tools from all servers
+mcp-registry list-tools
+
+# List tools from specific servers
+mcp-registry list-tools memory filesystem
+
+# Show detailed parameter information
+mcp-registry list-tools -v
+
+# Show full details without truncation
+mcp-registry list-tools -vv
+```
+
+**Example Output (Default):**
+
+```
+Server: memory
+  - get: Retrieve a value from memory
+  - set: Store a value in memory
+  - delete: Delete a value from memory
+
+Server: filesystem
+  - read: Read a file from the filesystem
+  - write: Write to a file in the filesystem
+```
+
+### `test-tool`
+
+Test an MCP tool with provided input.
+
+```bash
+mcp-registry test-tool TOOL_PATH [options]
+```
+
+**Arguments:**
+
+| Argument | Description |
+|----------|-------------|
+| `TOOL_PATH` | Path to the tool in the format `server__tool` |
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--input`, `-i` | Input parameters as JSON string |
+| `--input-file`, `-f` | Read input parameters from file |
+| `--raw`, `-r` | Output raw JSON response |
+| `--timeout`, `-t` | Timeout in seconds (default: 30) |
+| `--non-interactive`, `-n` | Disable interactive mode |
+
+**Input Methods:**
+
+1. Interactive mode (default when no input is provided)
+2. JSON string with the `--input` option
+3. JSON file with the `--input-file` option
+4. Piped JSON data from stdin
+
+**Examples:**
+
+```bash
+# Interactive mode
+mcp-registry test-tool memory__get
+
+# JSON string input
+mcp-registry test-tool memory__get --input '{"key": "foo"}'
+
+# File input
+mcp-registry test-tool memory__set --input-file params.json
+
+# Piped input
+echo '{"key": "foo", "value": "bar"}' | mcp-registry test-tool memory__set
+
+# Raw output
+mcp-registry test-tool memory__get --input '{"key": "foo"}' --raw
+
+# Increased timeout
+mcp-registry test-tool slow_server__long_process --timeout 120
+```
+
+For detailed information about this command, see the [Testing MCP Tools with the CLI](cli_test_tool.md) guide.
+
 ### `serve`
 
 Run a compound server with all or selected servers.
@@ -234,6 +346,8 @@ claude desktop mcp add servers mcp-registry serve memory
 3. **Tool not found errors**:
    - Ensure you're using the correct namespaced format (`server_name__tool_name`)
    - Verify that the server is running with `mcp-registry list`
+   - Check available tools with `mcp-registry list-tools`
+   - Try running `mcp-registry test-tool server_name` to see tools for a specific server
 
 4. **Permission issues**:
    - Make sure the configuration directory has the correct permissions

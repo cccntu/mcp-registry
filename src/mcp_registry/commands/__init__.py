@@ -1,0 +1,1 @@
+"""Command modules for the MCP Registry CLI."""

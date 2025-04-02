@@ -63,7 +63,7 @@ class MCPServerSettings(BaseModel):
         env: Environment variables to set for the server process
         description: Optional description of the server
     """
-    type: str  # "stdio" or "sse"
+    type: str = "stdio"  # "stdio" or "sse"
     command: str | None = None  # for stdio
     args: list[str] | None = None  # for stdio
     url: str | None = None  # for sse

@@ -23,9 +23,16 @@ MCP Registry serves as both a command-line tool for configuration management and
 - [Installation](#installation)
 - [Usage](#usage)
   - [CLI Tool](#1-as-a-cli-tool)
+    - [Basic Commands](#basic-commands)
+    - [Advanced Server Configuration](#advanced-server-configuration)
+    - [Integration with MCP Clients](#integration-with-mcp-clients)
   - [Configuration](#configuration)
+    - [Config File Location](#config-file-location)
+    - [Connection Management](#connection-management)
   - [Library](#2-as-a-library)
 - [Testing](#testing)
+  - [Quick Server Test](#quick-server-test)
+  - [Testing Tools](#testing-tools)
 - [Development](#development)
 - [Documentation](#documentation)
 - [License](#license)
@@ -58,7 +65,7 @@ The command-line interface provides an intuitive way to manage your MCP server c
 mcp-registry init
 
 # Add servers to your configuration
-mcp-registry add memory npx -y @modelcontextprotocol/server-memory
+mcp-registry add everything npx -y @modelcontextprotocol/server-everything
 mcp-registry add filesystem npx -y @modelcontextprotocol/server-filesystem
 
 # List all configured servers
@@ -68,13 +75,24 @@ mcp-registry list
 # (validates JSON when saving and keeps a backup)
 mcp-registry edit
 
+# List tools provided by configured servers
+mcp-registry list-tools                # List all tools from all servers
+mcp-registry list-tools everything     # List tools from a specific server
+mcp-registry list-tools -v             # Show parameter information 
+mcp-registry list-tools -vv            # Show full details without truncation
+
+# Test specific tools interactively or programmatically
+mcp-registry test-tool everything__add     # Interactive mode
+mcp-registry test-tool everything__add --input '{"a": 5, "b": 3}'  # With JSON input
+echo '{"a": 10, "b": 20}' | mcp-registry test-tool everything__add  # With piped input
+
 # Run a compound server that exposes ALL configured servers
 # (tools will be available as "server_name__tool_name")
 mcp-registry serve
 
 # Run a compound server with ONLY SPECIFIC servers from your config
 # This is key for selectively exposing only certain servers!
-mcp-registry serve memory filesystem
+mcp-registry serve everything filesystem
 
 # Test your compound server with the inspector tool
 npx -y @modelcontextprotocol/inspector mcp-registry serve
@@ -106,7 +124,7 @@ claude mcp add servers mcp-registry serve
 
 # Add ONLY SPECIFIC servers to Claude Code 
 # (selective exposure without creating a separate config!)
-claude mcp add servers mcp-registry serve memory filesystem
+claude mcp add servers mcp-registry serve everything filesystem
 
 # Similarly for other MCP-compatible clients
 # This ensures synchronized server configurations across all your tools
@@ -119,10 +137,15 @@ The config file format is the same as Claude Desktop / Claude Code:
 ```json
 {
   "mcpServers": {
-    "memory": {
+    "everything": {
       "type": "stdio", 
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-memory"]
+      "args": ["-y", "@modelcontextprotocol/server-everything"]
+    },
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem"]
+      // type defaults to "stdio" when not specified
     },
     "remote": {
       "type": "sse",
@@ -131,6 +154,8 @@ The config file format is the same as Claude Desktop / Claude Code:
   }
 }
 ```
+
+The `type` field is optional and defaults to "stdio" if not specified.
 
 #### Config File Location
 
@@ -181,8 +206,8 @@ async def main():
     aggregator = MCPAggregator(registry)
     tools = await aggregator.list_tools()
     result = await aggregator.call_tool(
-        tool_name="memory__set",  # Format: "server_name__tool_name"
-        arguments={"key": "test", "value": "Hello"}
+        tool_name="everything__add",  # Format: "server_name__tool_name"
+        arguments={"a": 5, "b": 3}
     )
     
     # Method 2: Persistent connections using context manager
@@ -193,20 +218,20 @@ async def main():
         
         # Multiple tool calls use the same connections
         result1 = await persistent_aggregator.call_tool(
-            tool_name="memory__set",
-            arguments={"key": "test", "value": "Hello"}
+            tool_name="everything__add",
+            arguments={"a": 10, "b": 20}
         )
         
         result2 = await persistent_aggregator.call_tool(
-            tool_name="memory__get",
-            arguments={"key": "test"}
+            tool_name="everything__echo",
+            arguments={"input": "Hello world"}
         )
         
         # Can also specify server and tool separately
         result3 = await persistent_aggregator.call_tool(
-            tool_name="get",
-            server_name="memory",
-            arguments={"key": "test"}
+            tool_name="echo",
+            server_name="everything",
+            arguments={"input": "Testing server connection"}
         )
         # Connections closed automatically when exiting context
 
@@ -248,6 +273,29 @@ To run the test script, you'll need to:
    ```
 
 This test creates a temporary server configuration, starts a simple tool server, and makes tool calls through the aggregator. The script automatically uses the example server from the python-sdk submodule.
+
+### Testing Tools
+
+MCP Registry provides a dedicated command for testing individual tools:
+
+```bash
+# Test a tool interactively
+mcp-registry test-tool everything__add
+
+# Test with provided parameters
+mcp-registry test-tool everything__add --input '{"a": 5, "b": 10}'
+
+# Get raw output
+mcp-registry test-tool everything__echo --input '{"input": "Hello world"}' --raw
+```
+
+The test-tool command:
+- Guides you through parameter input in interactive mode
+- Validates input against the tool's schema
+- Formats output for readability
+- Supports timeouts for long-running operations
+
+For detailed information, see the [Testing MCP Tools with the CLI](docs/cli_test_tool.md) guide.
 
 ## Development
 
