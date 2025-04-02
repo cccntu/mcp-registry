@@ -1,7 +1,8 @@
 [project]
 name = "mcp-registry"
-version = "0.6.0"
+version = "0.6.1"
 description = "A tool for managing and interacting with multiple MCP servers"
+readme = "README.md"
 authors = [
     {name = "Jonathan Chang", email = "31893406+cccntu@users.noreply.github.com"},
 ]
