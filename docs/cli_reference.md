@@ -13,10 +13,12 @@ MCP Registry provides the following commands:
 | `remove` | Remove a server from the configuration |
 | `list` | List all configured servers |
 | `list-tools` | List all tools provided by MCP servers |
+| `list-tools-json` | List tools in machine-readable JSON format |
 | `test-tool` | Test an MCP tool with provided input |
 | `edit` | Edit the configuration file with your default editor |
 | `serve` | Run a compound server with all or selected servers |
 | `show-config-path` | Show the current configuration file path |
+| `alias` | Manage tool aliases for easier access |
 
 ## Global Options
 
@@ -156,6 +158,7 @@ mcp-registry list-tools [server_names...] [options]
 | Option | Description |
 |--------|-------------|
 | `--verbose`, `-v` | Increase verbosity level (can be used multiple times) |
+| `--json`, `-j` | Output in JSON format (deprecated, use `list-tools-json` command instead) |
 
 **Verbosity Levels:**
 
@@ -177,6 +180,9 @@ mcp-registry list-tools -v
 
 # Show full details without truncation
 mcp-registry list-tools -vv
+
+# Output as JSON (deprecated, use list-tools-json instead)
+mcp-registry list-tools --json
 ```
 
 **Example Output (Default):**
@@ -190,6 +196,67 @@ Server: memory
 Server: filesystem
   - read: Read a file from the filesystem
   - write: Write to a file in the filesystem
+```
+
+### `list-tools-json`
+
+List all tools from MCP servers in JSON format.
+
+```bash
+mcp-registry list-tools-json [server_names...]
+```
+
+**Arguments:**
+
+| Argument | Description |
+|----------|-------------|
+| `server_names` | (Optional) Names of specific servers to include (filters the registry) |
+
+This command outputs a structured JSON object mapping server names to their tools, including tool parameters and descriptions. It's useful for:
+
+- Filtering tools with external tools like jq
+- Creating configuration files for tool filtering
+- Script automation and parsing
+
+**Examples:**
+
+```bash
+# List all servers and tools
+mcp-registry list-tools-json
+
+# List specific servers only
+mcp-registry list-tools-json memory github
+
+# Filter specific server with jq
+mcp-registry list-tools-json | jq '.memory'
+
+# Filter specific tools with jq
+mcp-registry list-tools-json | jq '.memory | map(select(.name == "read_graph"))'
+```
+
+**Example Output Structure:**
+
+```json
+{
+  "memory": [
+    {
+      "name": "get",
+      "description": "Retrieve a value from memory",
+      "parameters": [
+        {
+          "name": "key",
+          "type": "string",
+          "required": true,
+          "description": "The key to retrieve"
+        }
+      ]
+    },
+    ...
+  ],
+  "filesystem": [
+    ...
+  ]
+}
 ```
 
 ### `test-tool`
@@ -252,7 +319,7 @@ For detailed information about this command, see the [Testing MCP Tools with the
 Run a compound server with all or selected servers.
 
 ```bash
-mcp-registry serve [server_names...]
+mcp-registry serve [server_names...] [options]
 ```
 
 **Arguments:**
@@ -260,6 +327,14 @@ mcp-registry serve [server_names...]
 | Argument | Description |
 |----------|-------------|
 | `server_names` | (Optional) Names of specific servers to include (filters the registry) |
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--project`, `-p` | Project name to serve servers for |
+| `--filter`, `-f` | Filter tools by server, e.g. 'memory:get,set' or 'memory:-delete,-clear' |
+| `--alias`, `-a` | Tool alias in format 'alias=actual_tool' (can be specified multiple times) |
 
 **Examples:**
 
@@ -269,9 +344,21 @@ mcp-registry serve
 
 # Run only specific servers
 mcp-registry serve memory filesystem
+
+# Run with project-enabled servers
+mcp-registry serve --project myproject
+
+# Run with tool filtering (include only certain tools)
+mcp-registry serve --filter 'memory:get,set,github'
+
+# Run with negative filtering (exclude specific tools)
+mcp-registry serve --filter 'memory:-delete,-clear'
+
+# Run with aliases for tools
+mcp-registry serve --alias get=memory__get --alias set=memory__set
 ```
 
-When running, tools from the servers will be available with namespaced names in the format `server_name__tool_name`. For example, a tool called `get` from the `memory` server would be available as `memory__get`.
+When running, tools from the servers will be available with namespaced names in the format `server_name__tool_name` (e.g., `memory__get`). You can create aliases for more intuitive or shorter tool names.
 
 ### `show-config-path`
 
@@ -282,6 +369,42 @@ mcp-registry show-config-path
 ```
 
 This command displays the path to the configuration file being used, taking into account the `MCP_REGISTRY_CONFIG` environment variable if set.
+
+### `alias`
+
+Manage tool aliases for easier access.
+
+```bash
+mcp-registry alias COMMAND [options]
+```
+
+**Commands:**
+
+| Command | Description |
+|---------|-------------|
+| `list` | List all configured aliases |
+| `add` | Add or update an alias for a tool |
+| `remove` | Remove an alias |
+
+**Examples:**
+
+```bash
+# List all configured aliases
+mcp-registry alias list
+
+# Add an alias (allows using 'get' instead of 'memory__get')
+mcp-registry alias add get memory__get
+
+# Remove an alias
+mcp-registry alias remove get
+```
+
+Aliases can be used with any command that accepts tool names. For example, after creating an alias, you can use:
+
+```bash
+# Test the tool using the alias
+mcp-registry test-tool get --input '{"key": "foo"}'
+```
 
 ## Configuration File Format
 
@@ -301,6 +424,11 @@ The configuration file uses the following JSON format:
       "url": "http://localhost:3000/sse",
       "description": "Optional description"
     }
+  },
+  "aliases": {
+    "get": "memory__get",
+    "set": "memory__set",
+    "search": "github__search"
   }
 }
 ```

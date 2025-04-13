@@ -1,11 +1,12 @@
 [project]
 name = "mcp-registry"
-version = "0.9.0"
+version = "0.9.2"
 description = "A tool for managing and interacting with multiple MCP servers"
 readme = "README.md"
 authors = [
     {name = "Jonathan Chang", email = "31893406+cccntu@users.noreply.github.com"},
 ]
+urls = {repository = "https://github.com/cccntu/mcp-registry"}
 dependencies = [
     "click",
     "pydantic",

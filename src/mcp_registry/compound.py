@@ -380,7 +380,8 @@ class MCPAggregator:
         self, 
         registry: ServerRegistry, 
         tool_filter: dict[str, list[str] | None] | None = None,
-        separator: str = "__"
+        separator: str = "__",
+        aliases: dict[str, str] | None = None
     ):
         """
         Initialize the aggregator.
@@ -390,8 +391,11 @@ class MCPAggregator:
             tool_filter: Optional dict mapping server names to lists of tool names to include.
                         If a server is mapped to None, all tools from that server are included.
                         If a server is not in the dict, all tools from that server are included.
+                        If tool names start with "-", they are excluded (negative filtering).
             separator: Separator string between server name and tool name
                       (defaults to "__")
+            aliases: Optional dict mapping alias names to actual tool names.
+                    Allows custom names for tools without server prefixes.
         """
         self.registry = registry
         self.server_names = registry.list_servers()
@@ -405,9 +409,21 @@ class MCPAggregator:
                         f"Invalid tool_filter for server '{server}': "
                         f"value must be a list or None, got {type(tools).__name__}"
                     )
+                
+                # Validate consistent filter type (all positive or all negative)
+                if tools is not None and any(t.startswith("-") for t in tools) and any(not t.startswith("-") for t in tools):
+                    raise ValueError(
+                        f"Mixed filter types for server '{server}'. "
+                        f"Use either all positive filters or all negative filters."
+                    )
+                    
             self.tool_filter = tool_filter
         else:
             self.tool_filter = {}
+            
+        # Initialize aliases
+        self.aliases = aliases or {}
+        
         self._namespaced_tool_map: dict[str, NamespacedTool] = {}
         self._connection_manager = None
         self._in_context_manager = False
@@ -531,16 +547,30 @@ class MCPAggregator:
         # Helper function to check if a tool should be included based on the filter settings
         def should_include_tool(server_name: str, tool_name: str) -> bool:
             """Determine if a tool should be included based on the filter settings."""
-            # If server not in tool_filter, include all tools
+            # No filter defined for this server - include all tools
             if server_name not in self.tool_filter:
                 return True
                 
-            # If filter for server is None, include all tools
+            # Filter is None - include all tools from this server
             if self.tool_filter[server_name] is None:
                 return True
+            
+            # Get the tool list for this server
+            tool_list = self.tool_filter[server_name]
+            
+            # Empty list means include nothing
+            if not tool_list:
+                return False
                 
-            # Only include tools in the specified list
-            return tool_name in self.tool_filter[server_name]
+            # Determine if we're using negative filtering
+            is_negative_filter = tool_list[0].startswith("-")
+            
+            if is_negative_filter:
+                # Negative filtering: include tool if NOT in the exclusion list
+                return not any(t[1:] == tool_name for t in tool_list)
+            else:
+                # Positive filtering: include tool if in the inclusion list
+                return tool_name in tool_list
             
         # Process and namespace the tools with filtering
         for server_name, tools in results:
@@ -564,6 +594,23 @@ class MCPAggregator:
                     original_name=original_name,
                 )
 
+    def _resolve_alias(self, tool_name: str) -> str:
+        """
+        Resolve an alias to its actual tool name.
+        
+        Simple one-level alias resolution - no recursive resolution.
+        
+        Args:
+            tool_name: The name to resolve, which might be an alias
+            
+        Returns:
+            str: The resolved tool name (may be the original if not an alias)
+        """
+        # Just do a simple dictionary lookup - one level of aliases only
+        if self.aliases and tool_name in self.aliases:
+            return self.aliases[tool_name]
+        return tool_name
+    
     async def list_tools(self, return_server_mapping: bool = False) -> ListToolsResult | dict[str, list[Tool]]:
         """
         List all available tools from all sub-servers.
@@ -630,16 +677,29 @@ class MCPAggregator:
         server_name: str | None = None,
     ) -> CallToolResult:
         """
-        Call a tool by its namespaced name.
+        Call a tool by its namespaced name or alias.
+        
+        Args:
+            tool_name: The tool name to call. This can be a namespaced name (server__tool),
+                     an alias, or just the tool name if server_name is provided separately.
+            arguments: Optional dictionary of arguments to pass to the tool
+            server_name: Optional server name if not included in tool_name
+            
+        Returns:
+            CallToolResult with the result of the tool call
         """
-        # Determine server and tool names from parameters or the namespaced string.
+        # Resolve any aliases to get the actual tool name
+        tool_name = self._resolve_alias(tool_name)
+        
+        # Determine server and tool names from parameters or the namespaced string
         if server_name:
             actual_server = server_name
             actual_tool = tool_name
         else:
             if self.separator not in tool_name:
                 err_msg = (
-                    f"Tool name '{tool_name}' must be namespaced as 'server{self.separator}tool'"
+                    f"Tool name '{tool_name}' must be namespaced as 'server{self.separator}tool' "
+                    f"or defined as an alias"
                 )
                 return CallToolResult(
                     isError=True,
@@ -746,18 +806,21 @@ class MCPAggregator:
             return error_result(err_msg)
 
 
-async def run_registry_server(registry: ServerRegistry):
+async def run_registry_server(registry_or_aggregator: ServerRegistry | MCPAggregator):
     """
     Create and run an MCP compound server that aggregates tools from the registry.
     
     Args:
-        registry: Registry containing only the servers that should be exposed
+        registry_or_aggregator: Registry or pre-configured MCPAggregator
     """
     # Create server
     server = Server("MCP Registry Server")
 
-    # Create aggregator using the filtered registry
-    aggregator = MCPAggregator(registry)
+    # Create aggregator or use the provided one
+    if isinstance(registry_or_aggregator, ServerRegistry):
+        aggregator = MCPAggregator(registry_or_aggregator)
+    else:
+        aggregator = registry_or_aggregator
 
     # List available tools
     try:

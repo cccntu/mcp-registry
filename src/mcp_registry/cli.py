@@ -242,7 +242,7 @@ def list_servers(project):
         enabled_projects = [p for p, servers in projects.items() if name in servers]
         project_tag = f" [projects: {', '.join(enabled_projects)}]" if enabled_projects else ""
 
-        if settings["type"] == "stdio":
+        if settings.get("type", "stdio") == "stdio":
             cmd = f"{settings['command']} {' '.join(settings['args'])}"
             click.echo(f"  {name}: stdio ({cmd}){desc}{project_tag}", err=True)
         elif settings["type"] == "sse":

@@ -148,3 +148,10 @@ mcp-registry serve memory filesystem  # specific servers
 - Provide detailed, but concise error messages
 - Use `err=True` with `click.echo()` for error messages
 - Handle both expected exceptions and fallbacks
+
+## Development Principles
+
+- **KISS (Keep It Simple, Stupid)**: Favor simple, straightforward implementations over complex ones
+- Prioritize maintainability and readability over clever solutions
+- Avoid premature optimization or unnecessary abstraction
+- Each function or class should have a single, clear responsibility
